@@ -17,7 +17,7 @@ pub fn dashboard(area: Rect) -> DashboardLayout {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(8),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(6),
             Constraint::Length(3),
         ])

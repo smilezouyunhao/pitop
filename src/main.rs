@@ -51,8 +51,9 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = AppState::new();
 
+    let cwd = env::current_dir().context("failed to get current working directory")?;
     let sessions_dir = default_sessions_dir();
-    load_latest_session_for_cwd(&mut app, &sessions_dir)?;
+    load_latest_session_for_cwd(&mut app, &sessions_dir, &cwd)?;
 
     let (watch_sender, mut watch_receiver) = mpsc::unbounded_channel();
     let _session_watcher = if sessions_dir.exists() {
@@ -78,7 +79,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     app.apply_system_stats(system_receiver.borrow().clone());
 
     loop {
-        drain_watch_events(&mut app, &mut watch_receiver);
+        drain_watch_events(&mut app, &mut watch_receiver, &cwd);
         if system_receiver.has_changed().unwrap_or(false) {
             app.apply_system_stats(system_receiver.borrow_and_update().clone());
         }
@@ -96,9 +97,34 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     Ok(())
 }
 
-fn drain_watch_events(app: &mut AppState, receiver: &mut mpsc::UnboundedReceiver<WatchEvent>) {
+fn drain_watch_events(
+    app: &mut AppState,
+    receiver: &mut mpsc::UnboundedReceiver<WatchEvent>,
+    cwd: &Path,
+) {
     while let Ok(event) = receiver.try_recv() {
-        app.apply_watch_event(event);
+        match event {
+            WatchEvent::Entry { path, entry } => {
+                let should_load_file = app.current_session_path.as_ref() != Some(&path)
+                    || app.session_stats.session_id.is_none();
+
+                if should_load_file {
+                    match load_session_file_if_matches_cwd(app, &path, cwd) {
+                        Ok(true) => {}
+                        Ok(false) => {}
+                        Err(error) => app.apply_watch_event(WatchEvent::Error {
+                            path: Some(path),
+                            message: error.to_string(),
+                        }),
+                    }
+                } else {
+                    app.apply_entry(&entry);
+                }
+            }
+            WatchEvent::Error { path, message } => {
+                app.apply_watch_event(WatchEvent::Error { path, message });
+            }
+        }
     }
 }
 
@@ -120,18 +146,32 @@ fn default_sessions_dir() -> PathBuf {
         .join("sessions")
 }
 
-fn load_latest_session_for_cwd(app: &mut AppState, sessions_dir: &Path) -> Result<()> {
-    let cwd = env::current_dir().context("failed to get current working directory")?;
-    let Some(session_file) = find_latest_session_file(sessions_dir, &cwd)? else {
+fn load_latest_session_for_cwd(app: &mut AppState, sessions_dir: &Path, cwd: &Path) -> Result<()> {
+    let session_file = match find_latest_session_file(sessions_dir, cwd)? {
+        Some(path) => Some(path),
+        None => find_latest_any_session_file(sessions_dir)?,
+    };
+
+    let Some(session_file) = session_file else {
         return Ok(());
     };
 
-    let entries = read_session_file(&session_file)?;
-    for entry in &entries {
-        app.apply_entry(entry);
-    }
-    app.current_session_path = Some(session_file);
+    load_session_file(app, &session_file)
+}
 
+fn load_session_file_if_matches_cwd(app: &mut AppState, path: &Path, cwd: &Path) -> Result<bool> {
+    let cwd = cwd.to_string_lossy();
+    if !session_file_matches_cwd(path, &cwd)? {
+        return Ok(false);
+    }
+
+    load_session_file(app, path)?;
+    Ok(true)
+}
+
+fn load_session_file(app: &mut AppState, path: &Path) -> Result<()> {
+    let entries = read_session_file(path)?;
+    app.replace_session_entries(path.to_path_buf(), &entries);
     Ok(())
 }
 
@@ -143,6 +183,17 @@ fn find_latest_session_file(sessions_dir: &Path, cwd: &Path) -> Result<Option<Pa
     let cwd = cwd.to_string_lossy();
     let mut latest: Option<(SystemTime, PathBuf)> = None;
     find_latest_session_file_inner(sessions_dir, &cwd, &mut latest)?;
+
+    Ok(latest.map(|(_, path)| path))
+}
+
+fn find_latest_any_session_file(sessions_dir: &Path) -> Result<Option<PathBuf>> {
+    if !sessions_dir.exists() {
+        return Ok(None);
+    }
+
+    let mut latest: Option<(SystemTime, PathBuf)> = None;
+    find_latest_any_session_file_inner(sessions_dir, &mut latest)?;
 
     Ok(latest.map(|(_, path)| path))
 }
@@ -182,6 +233,40 @@ fn find_latest_session_file_inner(
     Ok(())
 }
 
+fn find_latest_any_session_file_inner(
+    path: &Path,
+    latest: &mut Option<(SystemTime, PathBuf)>,
+) -> Result<()> {
+    if path.is_file() {
+        if is_jsonl(path) {
+            let modified = fs::metadata(path)
+                .with_context(|| format!("failed to stat session file {}", path.display()))?
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+
+            if latest
+                .as_ref()
+                .is_none_or(|(latest_modified, _)| modified > *latest_modified)
+            {
+                *latest = Some((modified, path.to_path_buf()));
+            }
+        }
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path)
+            .with_context(|| format!("failed to read session directory {}", path.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("failed to read entry in {}", path.display()))?;
+            find_latest_any_session_file_inner(&entry.path(), latest)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn session_file_matches_cwd(path: &Path, cwd: &str) -> Result<bool> {
     let file = fs::File::open(path)
         .with_context(|| format!("failed to open session file {}", path.display()))?;
@@ -192,9 +277,20 @@ fn session_file_matches_cwd(path: &Path, cwd: &str) -> Result<bool> {
         .with_context(|| format!("failed to read session header {}", path.display()))?;
 
     match parse_entry(line.trim())? {
-        SessionEntry::Session(header) => Ok(header.cwd == cwd),
+        SessionEntry::Session(header) => Ok(path_matches_cwd(&header.cwd, cwd)),
         _ => Ok(false),
     }
+}
+
+fn path_matches_cwd(session_cwd: &str, cwd: &str) -> bool {
+    if session_cwd == cwd {
+        return true;
+    }
+
+    let session_cwd = Path::new(session_cwd).canonicalize().ok();
+    let cwd = Path::new(cwd).canonicalize().ok();
+
+    session_cwd.is_some() && session_cwd == cwd
 }
 
 fn is_jsonl(path: &Path) -> bool {

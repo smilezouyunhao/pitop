@@ -47,6 +47,16 @@ impl AppState {
         self.push_log(AppLogEntry::from_entry(entry));
     }
 
+    pub fn replace_session_entries(&mut self, path: PathBuf, entries: &[SessionEntry]) {
+        self.session_stats = SessionStats::default();
+        self.logs.clear();
+        self.current_session_path = Some(path);
+
+        for entry in entries {
+            self.apply_entry(entry);
+        }
+    }
+
     pub fn apply_watch_event(&mut self, event: WatchEvent) {
         match event {
             WatchEvent::Entry { path, entry } => {
@@ -181,6 +191,26 @@ mod tests {
         app.apply_system_stats(stats.clone());
 
         assert_eq!(app.system_stats, stats);
+    }
+
+    #[test]
+    fn replace_session_entries_resets_previous_session_state() {
+        let first = parse_entries(
+            r#"{"type":"session","version":3,"id":"old","timestamp":"t1","cwd":"/tmp"}"#,
+        )
+        .expect("valid first session");
+        let second = parse_entries(
+            r#"{"type":"session","version":3,"id":"new","timestamp":"t2","cwd":"/tmp"}"#,
+        )
+        .expect("valid second session");
+
+        let mut app = AppState::new();
+        app.replace_session_entries(PathBuf::from("old.jsonl"), &first);
+        app.replace_session_entries(PathBuf::from("new.jsonl"), &second);
+
+        assert_eq!(app.current_session_path, Some(PathBuf::from("new.jsonl")));
+        assert_eq!(app.session_stats.session_id.as_deref(), Some("new"));
+        assert_eq!(app.logs.len(), 1);
     }
 
     #[test]

@@ -15,9 +15,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         _ => "unknown".to_owned(),
     };
     let thinking = stats.thinking_level.as_deref().unwrap_or("unknown");
+    let cwd = stats.cwd.as_deref().unwrap_or("unknown cwd");
+    let file = app
+        .current_session_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown file");
 
     let text = format!(
-        "Status: ● Running   Session: {session}\nModel: {model}   Thinking: {thinking}   Messages: {}   Compactions: {}",
+        "Status: ● Running   Session: {session}\nModel: {model}   Thinking: {thinking}   Messages: {}   Compactions: {}\nCwd: {cwd}   File: {file}",
         stats.message_count, stats.compactions
     );
 
