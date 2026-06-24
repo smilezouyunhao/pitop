@@ -1,15 +1,30 @@
-use std::{io, time::Duration};
+use std::{
+    env, fs,
+    io::{self, BufRead, BufReader},
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime},
+};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use pitop::{app::AppState, ui::render_dashboard};
+use pitop::{
+    app::AppState,
+    data::{
+        session::{SessionEntry, parse_entry, read_session_file},
+        sysinfo::spawn_system_monitor,
+        watcher::{WatchEvent, spawn_session_watcher},
+    },
+    ui::render_dashboard,
+};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use tokio::sync::mpsc;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let mut terminal = init_terminal()?;
     let result = run(&mut terminal);
     restore_terminal(&mut terminal)?;
@@ -34,19 +49,156 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    let app = AppState::new();
+    let mut app = AppState::new();
+
+    let sessions_dir = default_sessions_dir();
+    load_latest_session_for_cwd(&mut app, &sessions_dir)?;
+
+    let (watch_sender, mut watch_receiver) = mpsc::unbounded_channel();
+    let _session_watcher = if sessions_dir.exists() {
+        match spawn_session_watcher(&sessions_dir, watch_sender) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                app.apply_watch_event(WatchEvent::Error {
+                    path: Some(sessions_dir.clone()),
+                    message: error.to_string(),
+                });
+                None
+            }
+        }
+    } else {
+        app.apply_watch_event(WatchEvent::Error {
+            path: Some(sessions_dir.clone()),
+            message: "sessions directory not found".to_owned(),
+        });
+        None
+    };
+
+    let (mut system_receiver, system_task) = spawn_system_monitor(Duration::from_secs(1));
+    app.apply_system_stats(system_receiver.borrow().clone());
 
     loop {
+        drain_watch_events(&mut app, &mut watch_receiver);
+        if system_receiver.has_changed().unwrap_or(false) {
+            app.apply_system_stats(system_receiver.borrow_and_update().clone());
+        }
+
         terminal.draw(|frame| render_dashboard(frame, &app))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
-                }
+            if should_quit(event::read()?) {
+                break;
             }
         }
     }
 
+    system_task.abort();
     Ok(())
+}
+
+fn drain_watch_events(app: &mut AppState, receiver: &mut mpsc::UnboundedReceiver<WatchEvent>) {
+    while let Ok(event) = receiver.try_recv() {
+        app.apply_watch_event(event);
+    }
+}
+
+fn should_quit(event: Event) -> bool {
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+        }
+        _ => false,
+    }
+}
+
+fn default_sessions_dir() -> PathBuf {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".pi")
+        .join("agent")
+        .join("sessions")
+}
+
+fn load_latest_session_for_cwd(app: &mut AppState, sessions_dir: &Path) -> Result<()> {
+    let cwd = env::current_dir().context("failed to get current working directory")?;
+    let Some(session_file) = find_latest_session_file(sessions_dir, &cwd)? else {
+        return Ok(());
+    };
+
+    let entries = read_session_file(&session_file)?;
+    for entry in &entries {
+        app.apply_entry(entry);
+    }
+    app.current_session_path = Some(session_file);
+
+    Ok(())
+}
+
+fn find_latest_session_file(sessions_dir: &Path, cwd: &Path) -> Result<Option<PathBuf>> {
+    if !sessions_dir.exists() {
+        return Ok(None);
+    }
+
+    let cwd = cwd.to_string_lossy();
+    let mut latest: Option<(SystemTime, PathBuf)> = None;
+    find_latest_session_file_inner(sessions_dir, &cwd, &mut latest)?;
+
+    Ok(latest.map(|(_, path)| path))
+}
+
+fn find_latest_session_file_inner(
+    path: &Path,
+    cwd: &str,
+    latest: &mut Option<(SystemTime, PathBuf)>,
+) -> Result<()> {
+    if path.is_file() {
+        if is_jsonl(path) && session_file_matches_cwd(path, cwd)? {
+            let modified = fs::metadata(path)
+                .with_context(|| format!("failed to stat session file {}", path.display()))?
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+
+            if latest
+                .as_ref()
+                .is_none_or(|(latest_modified, _)| modified > *latest_modified)
+            {
+                *latest = Some((modified, path.to_path_buf()));
+            }
+        }
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path)
+            .with_context(|| format!("failed to read session directory {}", path.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("failed to read entry in {}", path.display()))?;
+            find_latest_session_file_inner(&entry.path(), cwd, latest)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn session_file_matches_cwd(path: &Path, cwd: &str) -> Result<bool> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open session file {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .with_context(|| format!("failed to read session header {}", path.display()))?;
+
+    match parse_entry(line.trim())? {
+        SessionEntry::Session(header) => Ok(header.cwd == cwd),
+        _ => Ok(false),
+    }
+}
+
+fn is_jsonl(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension == "jsonl")
 }
