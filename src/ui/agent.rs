@@ -31,7 +31,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let paragraph = Paragraph::new(text).block(
         Block::default()
-            .title("AGENT STATUS")
+            .title("┤ AGENT STATUS ├")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow)),
     );

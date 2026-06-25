@@ -44,7 +44,7 @@ pub fn render(frame: &mut Frame, area: Rect, stats: &SessionStats) {
 
     let paragraph = Paragraph::new(lines).block(
         Block::default()
-            .title("TOOL CALLS")
+            .title("┤ TOOL CALLS ├")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Magenta)),
     );

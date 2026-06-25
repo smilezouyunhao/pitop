@@ -30,7 +30,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let list = List::new(items).block(
         Block::default()
-            .title("LOG STREAM")
+            .title("┤ LOG STREAM ├")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Gray)),
     );

@@ -35,7 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, stats: &SystemStats) {
 
     let paragraph = Paragraph::new(lines).block(
         Block::default()
-            .title("SYSTEM")
+            .title("┤ SYSTEM ├")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Green)),
     );

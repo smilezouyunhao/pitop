@@ -106,7 +106,7 @@ fn render_session_picker(frame: &mut Frame, area: Rect, app: &AppState) {
         .style(Style::default().bg(BACKGROUND))
         .block(
             Block::default()
-                .title("Sessions  ↑/↓ select  Enter load  Esc close")
+                .title("┤ Sessions  ↑/↓ select  Enter load  Esc close ├")
                 .borders(Borders::ALL)
                 .style(Style::default().bg(BACKGROUND))
                 .border_style(Style::default().fg(Color::Cyan)),
