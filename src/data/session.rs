@@ -31,7 +31,9 @@ pub struct SessionStats {
     pub current_model: Option<String>,
     pub thinking_level: Option<String>,
     pub message_count: u64,
+    pub turn_count: u64,
     pub compactions: u64,
+    pub latest_context_tokens: Option<u64>,
     pub tokens: TokenUsage,
     pub cost: CostUsage,
     pub tool_counts: BTreeMap<String, u64>,
@@ -48,6 +50,9 @@ impl SessionStats {
             }
             SessionEntry::Message(entry) => {
                 self.message_count += 1;
+                if entry.message.role == "user" {
+                    self.turn_count += 1;
+                }
                 self.latest_timestamp = Some(entry.timestamp.clone());
 
                 if let Some(usage) = &entry.message.usage {
@@ -55,7 +60,10 @@ impl SessionStats {
                     self.tokens.output += usage.output.unwrap_or_default();
                     self.tokens.cache_read += usage.cache_read.unwrap_or_default();
                     self.tokens.cache_write += usage.cache_write.unwrap_or_default();
-                    self.tokens.total_tokens += usage.total_tokens.unwrap_or_default();
+                    if let Some(total_tokens) = usage.total_tokens {
+                        self.latest_context_tokens = Some(total_tokens);
+                        self.tokens.total_tokens += total_tokens;
+                    }
 
                     if let Some(cost) = &usage.cost {
                         self.cost.input += cost.input.unwrap_or_default();
@@ -280,8 +288,9 @@ mod tests {
 {"type":"session","version":3,"id":"session-1","timestamp":"2026-06-24T00:00:00.000Z","cwd":"/tmp/project"}
 {"type":"model_change","id":"m1","parentId":null,"timestamp":"2026-06-24T00:00:01.000Z","provider":"openai-codex","modelId":"gpt-5.5"}
 {"type":"thinking_level_change","id":"t1","parentId":"m1","timestamp":"2026-06-24T00:00:02.000Z","thinkingLevel":"medium"}
-{"type":"message","id":"a1","parentId":"t1","timestamp":"2026-06-24T00:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"toolCall","name":"bash"},{"type":"toolCall","name":"read"}],"usage":{"input":10,"output":20,"cacheRead":30,"cacheWrite":40,"totalTokens":100,"cost":{"input":0.1,"output":0.2,"cacheRead":0.03,"cacheWrite":0.04,"total":0.37}}}}
-{"type":"message","id":"a2","parentId":"a1","timestamp":"2026-06-24T00:00:04.000Z","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash"}],"usage":{"input":1,"output":2,"totalTokens":3,"cost":{"total":0.5}}}}
+{"type":"message","id":"u1","parentId":"t1","timestamp":"2026-06-24T00:00:03.000Z","message":{"role":"user","content":"please check"}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-06-24T00:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"toolCall","name":"bash"},{"type":"toolCall","name":"read"}],"usage":{"input":10,"output":20,"cacheRead":30,"cacheWrite":40,"totalTokens":100,"cost":{"input":0.1,"output":0.2,"cacheRead":0.03,"cacheWrite":0.04,"total":0.37}}}}
+{"type":"message","id":"a2","parentId":"a1","timestamp":"2026-06-24T00:00:05.000Z","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash"}],"usage":{"input":1,"output":2,"totalTokens":3,"cost":{"total":0.5}}}}
 {"type":"compaction","id":"c1","parentId":"a2","timestamp":"2026-06-24T00:00:05.000Z","summary":"short","firstKeptEntryId":"a2","tokensBefore":1000}
 "#;
 
@@ -293,7 +302,9 @@ mod tests {
         assert_eq!(stats.current_provider.as_deref(), Some("openai-codex"));
         assert_eq!(stats.current_model.as_deref(), Some("gpt-5.5"));
         assert_eq!(stats.thinking_level.as_deref(), Some("medium"));
-        assert_eq!(stats.message_count, 2);
+        assert_eq!(stats.message_count, 3);
+        assert_eq!(stats.turn_count, 1);
+        assert_eq!(stats.latest_context_tokens, Some(3));
         assert_eq!(stats.compactions, 1);
         assert_eq!(stats.tokens.input, 11);
         assert_eq!(stats.tokens.output, 22);

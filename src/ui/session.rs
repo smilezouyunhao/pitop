@@ -53,8 +53,10 @@ fn session_columns(app: &AppState, available_width: usize) -> Vec<SessionColumn>
         "-".to_owned()
     };
     let model = stats.current_model.as_deref().unwrap_or("-").to_owned();
+    let context =
+        context_percent_label(stats.latest_context_tokens, stats.current_model.as_deref());
     let tokens = format_count(stats.tokens.total_tokens);
-    let turn = stats.message_count.to_string();
+    let turn = stats.turn_count.to_string();
 
     let mut columns = vec![
         column("pid", "Pid", "-", Color::DarkGray, 5, 7),
@@ -63,7 +65,7 @@ fn session_columns(app: &AppState, available_width: usize) -> Vec<SessionColumn>
         column("summary", "Summary", "-", Color::DarkGray, 8, 12),
         column("status", "Status", status, Color::Yellow, 8, 10),
         column("model", "Model", model, Color::White, 10, 16),
-        column("context", "Context", "-", Color::DarkGray, 8, 8),
+        column("context", "Context", context, Color::LightBlue, 8, 8),
         column("tokens", "Tokens", tokens, Color::Magenta, 10, 13),
         column("memory", "Memory", "-", Color::DarkGray, 7, 9),
         column("turn", "Turn", turn, Color::Cyan, 5, 5),
@@ -186,6 +188,42 @@ fn value_line(columns: &[SessionColumn]) -> Line<'static> {
     )
 }
 
+fn context_percent_label(context_tokens: Option<u64>, model: Option<&str>) -> String {
+    let Some(context_tokens) = context_tokens else {
+        return "-".to_owned();
+    };
+    let Some(model) = model else {
+        return "-".to_owned();
+    };
+    let Some(context_window) = context_window_for_model(model) else {
+        return "-".to_owned();
+    };
+
+    let percent = ((context_tokens as f64 / context_window as f64) * 100.0).clamp(0.0, 999.0);
+    format!("{percent:.0}%")
+}
+
+fn context_window_for_model(model: &str) -> Option<u64> {
+    let normalized = model.to_ascii_lowercase();
+
+    if normalized.contains("gpt-5.5") {
+        Some(272_000)
+    } else if normalized.contains("gpt-5.1")
+        || normalized.contains("gpt-5-mini")
+        || normalized.contains("gpt-5-codex")
+    {
+        Some(128_000)
+    } else if normalized.contains("claude-opus-4-8") || normalized.contains("claude-sonnet-4-6") {
+        Some(1_000_000)
+    } else if normalized.contains("deepseek-v4-flash") || normalized.contains("deepseek-v4-pro") {
+        Some(1_000_000)
+    } else if normalized.contains("claude") {
+        Some(200_000)
+    } else {
+        None
+    }
+}
+
 fn project_name(cwd: &str) -> Option<&str> {
     Path::new(cwd).file_name()?.to_str()
 }
@@ -234,6 +272,21 @@ mod tests {
     #[test]
     fn formats_counts_with_commas() {
         assert_eq!(format_count(21_100_844), "21,100,844");
+    }
+
+    #[test]
+    fn formats_context_percent_for_known_model() {
+        assert_eq!(context_percent_label(Some(136_000), Some("gpt-5.5")), "50%");
+        assert_eq!(
+            context_percent_label(Some(500_000), Some("deepseek-v4-pro")),
+            "50%"
+        );
+    }
+
+    #[test]
+    fn hides_context_percent_for_unknown_model() {
+        assert_eq!(context_percent_label(Some(10_000), Some("unknown")), "-");
+        assert_eq!(context_percent_label(None, Some("gpt-5.5")), "-");
     }
 
     #[test]
