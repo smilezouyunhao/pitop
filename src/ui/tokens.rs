@@ -33,8 +33,12 @@ pub fn render(frame: &mut Frame, area: Rect, stats: &SessionStats) {
         ),
     ];
 
-    let paragraph =
-        Paragraph::new(lines).block(Block::default().title("TOKEN USAGE").borders(Borders::ALL));
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title("TOKEN USAGE")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Blue)),
+    );
     frame.render_widget(paragraph, area);
 }
 

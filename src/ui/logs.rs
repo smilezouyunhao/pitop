@@ -28,6 +28,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         })
         .collect();
 
-    let list = List::new(items).block(Block::default().title("LOG STREAM").borders(Borders::ALL));
+    let list = List::new(items).block(
+        Block::default()
+            .title("LOG STREAM")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Gray)),
+    );
     frame.render_widget(list, area);
 }

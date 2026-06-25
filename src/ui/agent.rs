@@ -1,6 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
+    style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
 
@@ -28,7 +29,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
         stats.message_count, stats.compactions
     );
 
-    let paragraph =
-        Paragraph::new(text).block(Block::default().title("AGENT STATUS").borders(Borders::ALL));
+    let paragraph = Paragraph::new(text).block(
+        Block::default()
+            .title("AGENT STATUS")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow)),
+    );
     frame.render_widget(paragraph, area);
 }

@@ -42,8 +42,12 @@ pub fn render(frame: &mut Frame, area: Rect, stats: &SessionStats) {
         lines.extend(tools.iter().map(|(name, count)| tool_line(name, *count)));
     }
 
-    let paragraph =
-        Paragraph::new(lines).block(Block::default().title("TOOL CALLS").borders(Borders::ALL));
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title("TOOL CALLS")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Magenta)),
+    );
     frame.render_widget(paragraph, area);
 }
 

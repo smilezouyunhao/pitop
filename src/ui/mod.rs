@@ -15,8 +15,16 @@ use ratatui::{
 
 use crate::app::AppState;
 
+const BACKGROUND: Color = Color::Rgb(0, 0, 0);
+
 pub fn render_dashboard(frame: &mut Frame, app: &AppState) {
-    let areas = layout::dashboard(frame.area());
+    let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().bg(BACKGROUND)),
+        area,
+    );
+
+    let areas = layout::dashboard(area);
 
     render_header(frame, areas.header, app);
     system::render(frame, areas.system, &app.system_stats);
@@ -51,7 +59,11 @@ fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
         Span::raw(format!("model: {model}")),
     ]))
     .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::ALL));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
 
     frame.render_widget(header, area);
 }
@@ -90,11 +102,15 @@ fn render_session_picker(frame: &mut Frame, area: Rect, app: &AppState) {
             .collect()
     };
 
-    let list = List::new(items).block(
-        Block::default()
-            .title("Sessions  ↑/↓ select  Enter load  Esc close")
-            .borders(Borders::ALL),
-    );
+    let list = List::new(items)
+        .style(Style::default().bg(BACKGROUND))
+        .block(
+            Block::default()
+                .title("Sessions  ↑/↓ select  Enter load  Esc close")
+                .borders(Borders::ALL)
+                .style(Style::default().bg(BACKGROUND))
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
     frame.render_widget(list, popup);
 }
 
@@ -123,7 +139,11 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 fn render_footer(frame: &mut Frame, area: Rect) {
     let footer = Paragraph::new("q: quit  |  Tab: focus  |  arrows: scroll logs  |  s: sessions")
         .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
 
     frame.render_widget(footer, area);
 }

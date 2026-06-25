@@ -33,8 +33,12 @@ pub fn render(frame: &mut Frame, area: Rect, stats: &SystemStats) {
         ),
     ];
 
-    let paragraph =
-        Paragraph::new(lines).block(Block::default().title("SYSTEM").borders(Borders::ALL));
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .title("SYSTEM")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Green)),
+    );
     frame.render_widget(paragraph, area);
 }
 
