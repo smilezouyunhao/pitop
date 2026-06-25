@@ -8,7 +8,6 @@ pub struct DashboardLayout {
     pub agent: Rect,
     pub tools: Rect,
     pub logs: Rect,
-    pub footer: Rect,
 }
 
 pub fn dashboard(area: Rect) -> DashboardLayout {
@@ -19,7 +18,6 @@ pub fn dashboard(area: Rect) -> DashboardLayout {
             Constraint::Length(5),
             Constraint::Length(5),
             Constraint::Min(8),
-            Constraint::Length(3),
         ])
         .split(area);
 
@@ -40,6 +38,5 @@ pub fn dashboard(area: Rect) -> DashboardLayout {
         agent: vertical[2],
         tools: bottom[0],
         logs: bottom[1],
-        footer: vertical[4],
     }
 }

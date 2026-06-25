@@ -32,7 +32,6 @@ pub fn render_dashboard(frame: &mut Frame, app: &AppState) {
     agent::render(frame, areas.agent, app);
     tools::render(frame, areas.tools, &app.session_stats);
     logs::render(frame, areas.logs, app);
-    render_footer(frame, areas.footer);
 
     if app.session_picker_open {
         render_session_picker(frame, frame.area(), app);
@@ -134,18 +133,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1]);
 
     horizontal[1]
-}
-
-fn render_footer(frame: &mut Frame, area: Rect) {
-    let footer = Paragraph::new("q: quit  |  Tab: focus  |  arrows: scroll logs  |  s: sessions")
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
-
-    frame.render_widget(footer, area);
 }
 
 #[cfg(test)]
