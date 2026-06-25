@@ -7,12 +7,12 @@ use std::{
 
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use pitop::{
-    app::AppState,
+    app::{AppState, SessionChoice},
     data::{
         session::{SessionEntry, parse_entry, read_session_file},
         sysinfo::spawn_system_monitor,
@@ -87,8 +87,10 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         terminal.draw(|frame| render_dashboard(frame, &app))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if should_quit(event::read()?) {
-                break;
+            if let Event::Key(key) = event::read()? {
+                if handle_key_event(&mut app, key, &sessions_dir)? {
+                    break;
+                }
             }
         }
     }
@@ -128,12 +130,37 @@ fn drain_watch_events(
     }
 }
 
-fn should_quit(event: Event) -> bool {
-    match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+fn handle_key_event(app: &mut AppState, key: KeyEvent, sessions_dir: &Path) -> Result<bool> {
+    if key.kind != KeyEventKind::Press {
+        return Ok(false);
+    }
+
+    if app.session_picker_open {
+        match key.code {
+            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Esc => app.close_session_picker(),
+            KeyCode::Up => app.select_previous_session(),
+            KeyCode::Down => app.select_next_session(),
+            KeyCode::Enter => {
+                if let Some(path) = app.selected_session_path() {
+                    load_session_file(app, &path)?;
+                    app.close_session_picker();
+                }
+            }
+            _ => {}
         }
-        _ => false,
+
+        return Ok(false);
+    }
+
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => Ok(true),
+        KeyCode::Char('s') => {
+            let choices = collect_session_choices(sessions_dir)?;
+            app.open_session_picker(choices);
+            Ok(false)
+        }
+        _ => Ok(false),
     }
 }
 
@@ -173,6 +200,72 @@ fn load_session_file(app: &mut AppState, path: &Path) -> Result<()> {
     let entries = read_session_file(path)?;
     app.replace_session_entries(path.to_path_buf(), &entries);
     Ok(())
+}
+
+fn collect_session_choices(sessions_dir: &Path) -> Result<Vec<SessionChoice>> {
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut choices = Vec::new();
+    collect_session_choices_inner(sessions_dir, &mut choices)?;
+    choices.sort_by(|left, right| right.0.cmp(&left.0));
+
+    Ok(choices
+        .into_iter()
+        .take(200)
+        .map(|(_, choice)| choice)
+        .collect())
+}
+
+fn collect_session_choices_inner(
+    path: &Path,
+    choices: &mut Vec<(SystemTime, SessionChoice)>,
+) -> Result<()> {
+    if path.is_file() {
+        if is_jsonl(path) {
+            if let Some(choice) = read_session_choice(path)? {
+                let modified = fs::metadata(path)
+                    .with_context(|| format!("failed to stat session file {}", path.display()))?
+                    .modified()
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                choices.push((modified, choice));
+            }
+        }
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path)
+            .with_context(|| format!("failed to read session directory {}", path.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("failed to read entry in {}", path.display()))?;
+            collect_session_choices_inner(&entry.path(), choices)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn read_session_choice(path: &Path) -> Result<Option<SessionChoice>> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open session file {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .with_context(|| format!("failed to read session header {}", path.display()))?;
+
+    match parse_entry(line.trim())? {
+        SessionEntry::Session(header) => Ok(Some(SessionChoice {
+            path: path.to_path_buf(),
+            id: header.id,
+            cwd: header.cwd,
+            timestamp: header.timestamp,
+        })),
+        _ => Ok(None),
+    }
 }
 
 fn find_latest_session_file(sessions_dir: &Path, cwd: &Path) -> Result<Option<PathBuf>> {

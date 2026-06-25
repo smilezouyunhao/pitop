@@ -19,6 +19,9 @@ pub struct AppState {
     pub current_session_path: Option<PathBuf>,
     pub logs: VecDeque<AppLogEntry>,
     pub max_logs: usize,
+    pub session_picker_open: bool,
+    pub session_choices: Vec<SessionChoice>,
+    pub selected_session_index: usize,
 }
 
 impl Default for AppState {
@@ -29,6 +32,9 @@ impl Default for AppState {
             current_session_path: None,
             logs: VecDeque::new(),
             max_logs: 500,
+            session_picker_open: false,
+            session_choices: Vec::new(),
+            selected_session_index: 0,
         }
     }
 }
@@ -77,6 +83,49 @@ impl AppState {
         self.system_stats = stats;
     }
 
+    pub fn open_session_picker(&mut self, choices: Vec<SessionChoice>) {
+        self.session_picker_open = true;
+        self.session_choices = choices;
+        if self.session_choices.is_empty() {
+            self.selected_session_index = 0;
+        } else {
+            self.selected_session_index = self
+                .selected_session_index
+                .min(self.session_choices.len().saturating_sub(1));
+        }
+    }
+
+    pub fn close_session_picker(&mut self) {
+        self.session_picker_open = false;
+    }
+
+    pub fn select_next_session(&mut self) {
+        if self.session_choices.is_empty() {
+            return;
+        }
+
+        self.selected_session_index =
+            (self.selected_session_index + 1) % self.session_choices.len();
+    }
+
+    pub fn select_previous_session(&mut self) {
+        if self.session_choices.is_empty() {
+            return;
+        }
+
+        self.selected_session_index = if self.selected_session_index == 0 {
+            self.session_choices.len() - 1
+        } else {
+            self.selected_session_index - 1
+        };
+    }
+
+    pub fn selected_session_path(&self) -> Option<PathBuf> {
+        self.session_choices
+            .get(self.selected_session_index)
+            .map(|choice| choice.path.clone())
+    }
+
     fn push_log(&mut self, log: AppLogEntry) {
         self.logs.push_back(log);
 
@@ -84,6 +133,14 @@ impl AppState {
             self.logs.pop_front();
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionChoice {
+    pub path: PathBuf,
+    pub id: String,
+    pub cwd: String,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +268,40 @@ mod tests {
         assert_eq!(app.current_session_path, Some(PathBuf::from("new.jsonl")));
         assert_eq!(app.session_stats.session_id.as_deref(), Some("new"));
         assert_eq!(app.logs.len(), 1);
+    }
+
+    #[test]
+    fn session_picker_selection_wraps() {
+        let mut app = AppState::new();
+        app.open_session_picker(vec![
+            SessionChoice {
+                path: PathBuf::from("one.jsonl"),
+                id: "one".to_owned(),
+                cwd: "/one".to_owned(),
+                timestamp: "t1".to_owned(),
+            },
+            SessionChoice {
+                path: PathBuf::from("two.jsonl"),
+                id: "two".to_owned(),
+                cwd: "/two".to_owned(),
+                timestamp: "t2".to_owned(),
+            },
+        ]);
+
+        app.select_previous_session();
+        assert_eq!(
+            app.selected_session_path(),
+            Some(PathBuf::from("two.jsonl"))
+        );
+
+        app.select_next_session();
+        assert_eq!(
+            app.selected_session_path(),
+            Some(PathBuf::from("one.jsonl"))
+        );
+
+        app.close_session_picker();
+        assert!(!app.session_picker_open);
     }
 
     #[test]
