@@ -1,6 +1,6 @@
-pub mod agent;
 pub mod layout;
 pub mod logs;
+pub mod session;
 pub mod system;
 pub mod tokens;
 pub mod tools;
@@ -29,8 +29,8 @@ pub fn render_dashboard(frame: &mut Frame, app: &AppState) {
     render_header(frame, areas.header, app);
     system::render(frame, areas.system, &app.system_stats);
     tokens::render(frame, areas.tokens, &app.session_stats);
-    agent::render(frame, areas.agent, app);
     tools::render(frame, areas.tools, &app.session_stats);
+    session::render(frame, areas.session, app);
     logs::render(frame, areas.logs, app);
 
     if app.session_picker_open {

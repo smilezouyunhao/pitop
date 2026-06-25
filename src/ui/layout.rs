@@ -5,8 +5,8 @@ pub struct DashboardLayout {
     pub header: Rect,
     pub system: Rect,
     pub tokens: Rect,
-    pub agent: Rect,
     pub tools: Rect,
+    pub session: Rect,
     pub logs: Rect,
 }
 
@@ -16,7 +16,7 @@ pub fn dashboard(area: Rect) -> DashboardLayout {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(5),
-            Constraint::Length(5),
+            Constraint::Length(8),
             Constraint::Min(8),
         ])
         .split(area);
@@ -27,16 +27,16 @@ pub fn dashboard(area: Rect) -> DashboardLayout {
         .split(vertical[1]);
 
     let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(vertical[3]);
 
     DashboardLayout {
         header: vertical[0],
         system: top[0],
         tokens: top[1],
-        agent: vertical[2],
-        tools: bottom[0],
+        tools: vertical[2],
+        session: bottom[0],
         logs: bottom[1],
     }
 }
