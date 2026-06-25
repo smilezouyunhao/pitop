@@ -16,21 +16,21 @@ pub fn dashboard(area: Rect) -> DashboardLayout {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(8),
             Constraint::Length(5),
-            Constraint::Min(6),
+            Constraint::Length(5),
+            Constraint::Min(8),
             Constraint::Length(3),
         ])
         .split(area);
 
     let top = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(vertical[1]);
 
     let bottom = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
         .split(vertical[3]);
 
     DashboardLayout {

@@ -1,86 +1,72 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    widgets::{Block, Borders, LineGauge, Paragraph},
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::data::session::SessionStats;
 
 pub fn render(frame: &mut Frame, area: Rect, stats: &SessionStats) {
-    let block = Block::default().title("TOKEN USAGE").borders(Borders::ALL);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let lines = vec![
+        paired_line(
+            "Input",
+            format_count(stats.tokens.input),
+            Color::Blue,
+            "Output",
+            format_count(stats.tokens.output),
+            Color::Green,
+        ),
+        single_line(
+            "Cache R",
+            format_count(stats.tokens.cache_read),
+            Color::Cyan,
+        ),
+        paired_line(
+            "Cost",
+            format!("${:.4}", stats.cost.total),
+            Color::Yellow,
+            "Total",
+            format_count(stats.tokens.total_tokens),
+            Color::Magenta,
+        ),
+    ];
 
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ])
-        .split(inner);
-
-    let max = stats
-        .tokens
-        .total_tokens
-        .max(stats.tokens.input)
-        .max(stats.tokens.output)
-        .max(stats.tokens.cache_read)
-        .max(stats.tokens.cache_write)
-        .max(1);
-
-    render_line(
-        frame,
-        rows[0],
-        "Input",
-        stats.tokens.input,
-        max,
-        Color::Blue,
-    );
-    render_line(
-        frame,
-        rows[1],
-        "Output",
-        stats.tokens.output,
-        max,
-        Color::Green,
-    );
-    render_line(
-        frame,
-        rows[2],
-        "Cache R",
-        stats.tokens.cache_read,
-        max,
-        Color::Cyan,
-    );
-    render_line(
-        frame,
-        rows[3],
-        "Cache W",
-        stats.tokens.cache_write,
-        max,
-        Color::Magenta,
-    );
-
-    let cost = Paragraph::new(format!(
-        "Cost ${:.4}  Total {}",
-        stats.cost.total,
-        format_count(stats.tokens.total_tokens)
-    ));
-    frame.render_widget(cost, rows[4]);
+    let paragraph =
+        Paragraph::new(lines).block(Block::default().title("TOKEN USAGE").borders(Borders::ALL));
+    frame.render_widget(paragraph, area);
 }
 
-fn render_line(frame: &mut Frame, area: Rect, label: &str, value: u64, max: u64, color: Color) {
-    let ratio = value as f64 / max as f64;
-    let gauge = LineGauge::default()
-        .label(format!("{label:<7} {}", format_count(value)))
-        .ratio(ratio.clamp(0.0, 1.0))
-        .filled_style(Style::default().fg(color));
+fn single_line<'a>(label: &'a str, value: String, color: Color) -> Line<'a> {
+    Line::from(metric_spans(label, value, color))
+}
 
-    frame.render_widget(gauge, area);
+fn paired_line<'a>(
+    left_label: &'a str,
+    left_value: String,
+    left_color: Color,
+    right_label: &'a str,
+    right_value: String,
+    right_color: Color,
+) -> Line<'a> {
+    let mut spans = metric_spans(left_label, left_value, left_color);
+    spans.push(Span::raw("    "));
+    spans.extend(metric_spans(right_label, right_value, right_color));
+    Line::from(spans)
+}
+
+fn metric_spans<'a>(label: &'a str, value: String, color: Color) -> Vec<Span<'a>> {
+    vec![
+        Span::styled(
+            format!("{label:<8}"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            value,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ]
 }
 
 fn format_count(value: u64) -> String {
