@@ -8,6 +8,8 @@ use ratatui::{
 
 use crate::data::session::SessionStats;
 
+const METRIC_WIDTH: usize = 28;
+
 pub fn render(frame: &mut Frame, area: Rect, stats: &SessionStats) {
     let lines = vec![
         paired_line(
@@ -43,7 +45,7 @@ pub fn render(frame: &mut Frame, area: Rect, stats: &SessionStats) {
 }
 
 fn single_line<'a>(label: &'a str, value: String, color: Color) -> Line<'a> {
-    Line::from(metric_spans(label, value, color))
+    Line::from(metric_spans(label, value, color, None))
 }
 
 fn paired_line<'a>(
@@ -54,13 +56,20 @@ fn paired_line<'a>(
     right_value: String,
     right_color: Color,
 ) -> Line<'a> {
-    let mut spans = metric_spans(left_label, left_value, left_color);
-    spans.push(Span::raw("    "));
-    spans.extend(metric_spans(right_label, right_value, right_color));
+    let left_width = metric_text_width(left_label, &left_value);
+    let left_padding = METRIC_WIDTH.saturating_sub(left_width);
+
+    let mut spans = metric_spans(left_label, left_value, left_color, Some(left_padding));
+    spans.extend(metric_spans(right_label, right_value, right_color, None));
     Line::from(spans)
 }
 
-fn metric_spans<'a>(label: &'a str, value: String, color: Color) -> Vec<Span<'a>> {
+fn metric_spans<'a>(
+    label: &'a str,
+    value: String,
+    color: Color,
+    trailing_spaces: Option<usize>,
+) -> Vec<Span<'a>> {
     vec![
         Span::styled(
             format!("{label:<8}"),
@@ -70,7 +79,12 @@ fn metric_spans<'a>(label: &'a str, value: String, color: Color) -> Vec<Span<'a>
             value,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
+        Span::raw(" ".repeat(trailing_spaces.unwrap_or_default())),
     ]
+}
+
+fn metric_text_width(_label: &str, value: &str) -> usize {
+    8 + value.chars().count()
 }
 
 fn format_count(value: u64) -> String {
