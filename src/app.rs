@@ -6,7 +6,7 @@ use std::{
 
 use crate::data::{
     process::PiInstance,
-    session::{SessionEntry, SessionStats},
+    session::{AgentMessage, SessionEntry, SessionStats},
     sysinfo::SystemStats,
     watcher::WatchEvent,
 };
@@ -72,7 +72,8 @@ impl AppState {
                 self.current_session_path = path;
                 self.push_log(AppLogEntry {
                     timestamp: None,
-                    message: format!("watch error: {message}"),
+                    kind: LogKind::Error,
+                    message: format!("Error: watch {message}"),
                 });
             }
         }
@@ -145,7 +146,22 @@ impl AppState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppLogEntry {
     pub timestamp: Option<String>,
+    pub kind: LogKind,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogKind {
+    User,
+    ToolCall,
+    ToolResult,
+    Command,
+    Test,
+    Error,
+    Model,
+    Compact,
+    Done,
+    Other,
 }
 
 impl AppLogEntry {
@@ -153,33 +169,73 @@ impl AppLogEntry {
         match entry {
             SessionEntry::Session(entry) => Self {
                 timestamp: Some(entry.timestamp.clone()),
-                message: format!("session started: {}", entry.id),
+                kind: LogKind::Other,
+                message: format!("Session started: {}", entry.id),
             },
-            SessionEntry::Message(entry) => Self {
-                timestamp: Some(entry.timestamp.clone()),
-                message: format!("{} message", entry.message.role),
-            },
+            SessionEntry::Message(entry) => {
+                let message = entry.message.log_summary();
+                Self {
+                    timestamp: Some(entry.timestamp.clone()),
+                    kind: log_kind_for_message(&entry.message, &message),
+                    message,
+                }
+            }
             SessionEntry::ModelChange(entry) => Self {
                 timestamp: Some(entry.timestamp.clone()),
-                message: format!("model: {}/{}", entry.provider, entry.model_id),
+                kind: LogKind::Model,
+                message: format!("Model changed: {}/{}", entry.provider, entry.model_id),
             },
             SessionEntry::ThinkingLevelChange(entry) => Self {
                 timestamp: Some(entry.timestamp.clone()),
-                message: format!("thinking: {}", entry.thinking_level),
+                kind: LogKind::Model,
+                message: format!("Thinking level: {}", entry.thinking_level),
             },
             SessionEntry::Compaction(entry) => Self {
                 timestamp: Some(entry.timestamp.clone()),
-                message: "compaction".to_owned(),
+                kind: LogKind::Compact,
+                message: entry
+                    .tokens_before
+                    .map(|tokens| format!("Compacted context: {tokens} tokens before"))
+                    .unwrap_or_else(|| "Compacted context".to_owned()),
             },
             SessionEntry::ToolExecution(entry) => Self {
                 timestamp: entry.timestamp.clone(),
-                message: format!("tool: {}", entry.tool_name.as_deref().unwrap_or("unknown")),
+                kind: LogKind::ToolCall,
+                message: format!(
+                    "Tool execution: {}",
+                    entry.tool_name.as_deref().unwrap_or("unknown")
+                ),
             },
             SessionEntry::Other => Self {
                 timestamp: None,
-                message: "other entry".to_owned(),
+                kind: LogKind::Other,
+                message: "Other entry".to_owned(),
             },
         }
+    }
+}
+
+fn log_kind_for_message(message: &AgentMessage, summary: &str) -> LogKind {
+    if message.is_error.unwrap_or(false) {
+        return LogKind::Error;
+    }
+
+    match message.role.as_str() {
+        "user" => LogKind::User,
+        "assistant" if !message.tool_call_names().is_empty() => {
+            if summary.starts_with("Command:") {
+                LogKind::Command
+            } else {
+                LogKind::ToolCall
+            }
+        }
+        "assistant" => LogKind::Done,
+        "toolResult" if summary.starts_with("Test:") => LogKind::Test,
+        "toolResult" if summary.starts_with("Command result:") || summary.starts_with("Build:") => {
+            LogKind::Command
+        }
+        "toolResult" => LogKind::ToolResult,
+        _ => LogKind::Other,
     }
 }
 
@@ -322,6 +378,7 @@ mod tests {
         for index in 0..3 {
             app.push_log(AppLogEntry {
                 timestamp: None,
+                kind: LogKind::Other,
                 message: format!("log {index}"),
             });
         }
