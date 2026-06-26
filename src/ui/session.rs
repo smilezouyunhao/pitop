@@ -117,7 +117,7 @@ fn row_from_instance(instance: &PiInstance, selected: bool) -> SessionRow {
             .map(short_session_id)
             .unwrap_or_else(|| "-".to_owned()),
         summary: "-".to_owned(),
-        status: "● Live".to_owned(),
+        status: instance.status.clone(),
         model: stats
             .and_then(|stats| stats.current_model.as_deref())
             .unwrap_or("-")
@@ -153,7 +153,7 @@ fn row_from_stats(stats: &SessionStats, selected: bool) -> SessionRow {
             .map(short_session_id)
             .unwrap_or_else(|| "-".to_owned()),
         summary: "-".to_owned(),
-        status: "● Wait".to_owned(),
+        status: "Done".to_owned(),
         model: stats.current_model.as_deref().unwrap_or("-").to_owned(),
         context: context_percent_label(stats.latest_context_tokens, stats.current_model.as_deref()),
         tokens: format_count(stats.tokens.total_tokens),
@@ -320,7 +320,8 @@ fn cell_color(key: &str) -> Color {
     match key {
         "selected" => Color::Cyan,
         "pid" | "summary" | "memory" => Color::DarkGray,
-        "session" | "status" => Color::Yellow,
+        "session" => Color::Yellow,
+        "status" => Color::Green,
         "context" => Color::LightBlue,
         "tokens" => Color::Magenta,
         "turn" => Color::Cyan,
@@ -492,6 +493,7 @@ mod tests {
             memory_bytes: 335 * 1024 * 1024,
             cpu_percent: 0.0,
             command: "pi-coding-agent".to_owned(),
+            status: "Unknown".to_owned(),
             session_path: None,
             stats: None,
         });
@@ -511,6 +513,7 @@ mod tests {
             memory_bytes: 335 * 1024 * 1024,
             cpu_percent: 0.0,
             command: "pi-coding-agent".to_owned(),
+            status: "Waiting".to_owned(),
             session_path: Some("session.jsonl".into()),
             stats: None,
         });

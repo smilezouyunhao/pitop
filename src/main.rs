@@ -76,7 +76,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         None
     };
 
-    let (mut system_receiver, system_task) = spawn_system_monitor(Duration::from_secs(1));
+    let (mut system_receiver, system_task) = spawn_system_monitor(Duration::from_secs(2));
     app.apply_system_stats(system_receiver.borrow().clone());
     refresh_pi_instances(&mut app, &sessions_dir)?;
     let mut last_process_refresh = Instant::now();

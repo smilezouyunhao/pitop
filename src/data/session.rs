@@ -34,6 +34,10 @@ pub struct SessionStats {
     pub turn_count: u64,
     pub compactions: u64,
     pub latest_context_tokens: Option<u64>,
+    pub latest_message_role: Option<String>,
+    pub latest_message_has_tool_call: bool,
+    pub latest_stop_reason: Option<String>,
+    pub awaiting_assistant: bool,
     pub tokens: TokenUsage,
     pub cost: CostUsage,
     pub tool_counts: BTreeMap<String, u64>,
@@ -54,6 +58,10 @@ impl SessionStats {
                     self.turn_count += 1;
                 }
                 self.latest_timestamp = Some(entry.timestamp.clone());
+                self.latest_message_role = Some(entry.message.role.clone());
+                self.latest_message_has_tool_call = !entry.message.tool_call_names().is_empty();
+                self.latest_stop_reason = entry.message.stop_reason.clone();
+                self.awaiting_assistant = is_waiting_for_assistant(&entry.message);
 
                 if let Some(usage) = &entry.message.usage {
                     self.tokens.input += usage.input.unwrap_or_default();
@@ -192,7 +200,20 @@ pub struct AgentMessage {
     pub content: Option<MessageContent>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(rename = "stopReason")]
+    pub stop_reason: Option<String>,
     pub usage: Option<MessageUsage>,
+}
+
+fn is_waiting_for_assistant(message: &AgentMessage) -> bool {
+    match message.role.as_str() {
+        "user" | "toolResult" => true,
+        "assistant" => {
+            message.stop_reason.as_deref() != Some("stop")
+                && message.stop_reason.as_deref() != Some("end_turn")
+        }
+        _ => false,
+    }
 }
 
 impl AgentMessage {
@@ -305,6 +326,10 @@ mod tests {
         assert_eq!(stats.message_count, 3);
         assert_eq!(stats.turn_count, 1);
         assert_eq!(stats.latest_context_tokens, Some(3));
+        assert_eq!(stats.latest_message_role.as_deref(), Some("assistant"));
+        assert!(stats.latest_message_has_tool_call);
+        assert_eq!(stats.latest_stop_reason.as_deref(), None);
+        assert!(stats.awaiting_assistant);
         assert_eq!(stats.compactions, 1);
         assert_eq!(stats.tokens.input, 11);
         assert_eq!(stats.tokens.output, 22);
@@ -314,6 +339,42 @@ mod tests {
         assert!((stats.cost.total - 0.87).abs() < f64::EPSILON);
         assert_eq!(stats.tool_counts.get("bash"), Some(&2));
         assert_eq!(stats.tool_counts.get("read"), Some(&1));
+    }
+
+    #[test]
+    fn tracks_waiting_for_assistant_state() {
+        let after_user = stats_from_entries(
+            &parse_entries(
+                r#"{"type":"message","id":"u1","parentId":null,"timestamp":"t1","message":{"role":"user","content":"hello"}}"#,
+            )
+            .expect("valid user message"),
+        );
+        assert!(after_user.awaiting_assistant);
+        assert!(!after_user.latest_message_has_tool_call);
+
+        let after_tool_call = stats_from_entries(
+            &parse_entries(
+                r#"
+{"type":"message","id":"u1","parentId":null,"timestamp":"t1","message":{"role":"user","content":"hello"}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"t2","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash"}],"stopReason":"toolUse"}}
+"#,
+            )
+            .expect("valid tool call"),
+        );
+        assert!(after_tool_call.awaiting_assistant);
+        assert!(after_tool_call.latest_message_has_tool_call);
+
+        let after_stop = stats_from_entries(
+            &parse_entries(
+                r#"
+{"type":"message","id":"u1","parentId":null,"timestamp":"t1","message":{"role":"user","content":"hello"}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"t2","message":{"role":"assistant","content":"done","stopReason":"stop"}}
+"#,
+            )
+            .expect("valid final assistant message"),
+        );
+        assert!(!after_stop.awaiting_assistant);
+        assert_eq!(after_stop.latest_stop_reason.as_deref(), Some("stop"));
     }
 
     #[test]

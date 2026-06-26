@@ -17,6 +17,7 @@ pub struct PiInstance {
     pub memory_bytes: u64,
     pub cpu_percent: f32,
     pub command: String,
+    pub status: String,
     pub session_path: Option<PathBuf>,
     pub stats: Option<SessionStats>,
 }
@@ -56,6 +57,9 @@ pub fn discover_pi_instances(sessions_dir: &Path) -> Result<Vec<PiInstance>> {
     }
 
     attach_recent_sessions_to_unmatched_instances(&mut instances, sessions_dir)?;
+    for instance in &mut instances {
+        instance.status = status_for_instance(instance);
+    }
     instances.retain(|instance| instance.session_path.is_some() || instance.stats.is_some());
     instances.sort_by(|left, right| left.pid.cmp(&right.pid));
     Ok(instances)
@@ -73,6 +77,7 @@ fn instance_from_process(process: ProcessRow, session_path: Option<PathBuf>) -> 
         memory_bytes: process.rss_kb.saturating_mul(1024),
         cpu_percent: process.cpu_percent,
         command: process.command,
+        status: "Unknown".to_owned(),
         session_path,
         stats,
     }
@@ -147,6 +152,20 @@ fn collect_recent_session_files(path: &Path, files: &mut Vec<(SystemTime, PathBu
     }
 
     Ok(())
+}
+
+fn status_for_instance(instance: &PiInstance) -> String {
+    let Some(stats) = &instance.stats else {
+        return "Unknown".to_owned();
+    };
+
+    if stats.latest_message_has_tool_call {
+        "Executing".to_owned()
+    } else if stats.awaiting_assistant {
+        "Thinking".to_owned()
+    } else {
+        "Waiting".to_owned()
+    }
 }
 
 fn session_path_for_pid(pid: u32, sessions_dir: &Path) -> Result<Option<PathBuf>> {
