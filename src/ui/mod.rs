@@ -7,10 +7,10 @@ pub mod tools;
 
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::app::AppState;
@@ -24,7 +24,7 @@ pub fn render_dashboard(frame: &mut Frame, app: &AppState) {
         area,
     );
 
-    let areas = layout::dashboard(area);
+    let areas = layout::dashboard(area, session::row_count(app));
 
     render_header(frame, areas.header, app);
     system::render(frame, areas.system, &app.system_stats);
@@ -32,10 +32,6 @@ pub fn render_dashboard(frame: &mut Frame, app: &AppState) {
     tools::render(frame, areas.tools, &app.session_stats);
     session::render(frame, areas.session, app);
     logs::render(frame, areas.logs, app);
-
-    if app.session_picker_open {
-        render_session_picker(frame, frame.area(), app);
-    }
 }
 
 fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -65,74 +61,6 @@ fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
     );
 
     frame.render_widget(header, area);
-}
-
-fn render_session_picker(frame: &mut Frame, area: Rect, app: &AppState) {
-    let popup = centered_rect(80, 60, area);
-    frame.render_widget(Clear, popup);
-
-    let items: Vec<ListItem> = if app.session_choices.is_empty() {
-        vec![ListItem::new("No sessions found")]
-    } else {
-        app.session_choices
-            .iter()
-            .enumerate()
-            .map(|(index, choice)| {
-                let marker = if index == app.selected_session_index {
-                    "›"
-                } else {
-                    " "
-                };
-                let mut item = ListItem::new(Line::from(vec![
-                    Span::raw(format!("{marker} ")),
-                    Span::styled(
-                        choice.id.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(format!("  {}  {}", choice.timestamp, choice.cwd)),
-                ]));
-
-                if index == app.selected_session_index {
-                    item = item.style(Style::default().fg(Color::Black).bg(Color::Cyan));
-                }
-
-                item
-            })
-            .collect()
-    };
-
-    let list = List::new(items)
-        .style(Style::default().bg(BACKGROUND))
-        .block(
-            Block::default()
-                .title("┤ Sessions  ↑/↓ select  Enter load  Esc close ├")
-                .borders(Borders::ALL)
-                .style(Style::default().bg(BACKGROUND))
-                .border_style(Style::default().fg(Color::Cyan)),
-        );
-    frame.render_widget(list, popup);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1]);
-
-    horizontal[1]
 }
 
 #[cfg(test)]

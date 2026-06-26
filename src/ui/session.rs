@@ -8,22 +8,48 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::app::AppState;
+use crate::{
+    app::AppState,
+    data::{process::PiInstance, session::SessionStats},
+};
 
 #[derive(Debug, Clone)]
 struct SessionColumn {
     key: &'static str,
     header: &'static str,
-    value: String,
-    color: Color,
     min_width: usize,
     width: usize,
 }
 
+#[derive(Debug, Clone)]
+struct SessionRow {
+    pid: String,
+    project: String,
+    session: String,
+    summary: String,
+    status: String,
+    model: String,
+    context: String,
+    tokens: String,
+    memory: String,
+    turn: String,
+}
+
 pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
     let inner_width = area.width.saturating_sub(2) as usize;
-    let columns = session_columns(app, inner_width);
-    let lines = vec![header_line(&columns), value_line(&columns)];
+    let columns = session_columns(inner_width);
+    let max_rows = area.height.saturating_sub(3) as usize;
+    let rows = session_rows(app, max_rows);
+
+    let mut lines = vec![header_line(&columns)];
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No active Pi processes",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        lines.extend(rows.iter().map(|row| value_line(&columns, row)));
+    }
 
     let paragraph = Paragraph::new(lines).block(
         Block::default()
@@ -34,41 +60,111 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_widget(paragraph, area);
 }
 
-fn session_columns(app: &AppState, available_width: usize) -> Vec<SessionColumn> {
-    let stats = &app.session_stats;
-    let project = stats
-        .cwd
-        .as_deref()
-        .and_then(project_name)
-        .unwrap_or("-")
-        .to_owned();
-    let session = stats
-        .session_id
-        .as_deref()
-        .map(short_session_id)
-        .unwrap_or_else(|| "-".to_owned());
-    let status = if stats.session_id.is_some() {
-        "● Wait".to_owned()
-    } else {
-        "-".to_owned()
-    };
-    let model = stats.current_model.as_deref().unwrap_or("-").to_owned();
-    let context =
-        context_percent_label(stats.latest_context_tokens, stats.current_model.as_deref());
-    let tokens = format_count(stats.tokens.total_tokens);
-    let turn = stats.turn_count.to_string();
+pub fn row_count(app: &AppState) -> usize {
+    associated_instances(app)
+        .count()
+        .max(usize::from(app.session_stats.session_id.is_some()))
+        .max(1)
+}
 
+fn session_rows(app: &AppState, limit: usize) -> Vec<SessionRow> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let associated: Vec<_> = associated_instances(app).take(limit).collect();
+    if !associated.is_empty() {
+        return associated.into_iter().map(row_from_instance).collect();
+    }
+
+    if app.session_stats.session_id.is_some() {
+        return vec![row_from_stats(&app.session_stats)];
+    }
+
+    Vec::new()
+}
+
+fn associated_instances(app: &AppState) -> impl Iterator<Item = &PiInstance> {
+    app.pi_instances
+        .iter()
+        .filter(|instance| instance.session_path.is_some() || instance.stats.is_some())
+}
+
+fn row_from_instance(instance: &PiInstance) -> SessionRow {
+    let stats = instance.stats.as_ref();
+    let project = stats
+        .and_then(|stats| stats.cwd.as_deref())
+        .and_then(project_name)
+        .map(str::to_owned)
+        .or_else(|| {
+            project_name_from_session_path(instance.session_path.as_deref()).map(str::to_owned)
+        })
+        .unwrap_or_else(|| "-".to_owned());
+
+    SessionRow {
+        pid: instance.pid.to_string(),
+        project,
+        session: stats
+            .and_then(|stats| stats.session_id.as_deref())
+            .map(short_session_id)
+            .unwrap_or_else(|| "-".to_owned()),
+        summary: "-".to_owned(),
+        status: "● Live".to_owned(),
+        model: stats
+            .and_then(|stats| stats.current_model.as_deref())
+            .unwrap_or("-")
+            .to_owned(),
+        context: stats
+            .map(|stats| {
+                context_percent_label(stats.latest_context_tokens, stats.current_model.as_deref())
+            })
+            .unwrap_or_else(|| "-".to_owned()),
+        tokens: stats
+            .map(|stats| format_count(stats.tokens.total_tokens))
+            .unwrap_or_else(|| "-".to_owned()),
+        memory: format_memory(instance.memory_bytes),
+        turn: stats
+            .map(|stats| stats.turn_count.to_string())
+            .unwrap_or_else(|| "-".to_owned()),
+    }
+}
+
+fn row_from_stats(stats: &SessionStats) -> SessionRow {
+    SessionRow {
+        pid: "-".to_owned(),
+        project: stats
+            .cwd
+            .as_deref()
+            .and_then(project_name)
+            .unwrap_or("-")
+            .to_owned(),
+        session: stats
+            .session_id
+            .as_deref()
+            .map(short_session_id)
+            .unwrap_or_else(|| "-".to_owned()),
+        summary: "-".to_owned(),
+        status: "● Wait".to_owned(),
+        model: stats.current_model.as_deref().unwrap_or("-").to_owned(),
+        context: context_percent_label(stats.latest_context_tokens, stats.current_model.as_deref()),
+        tokens: format_count(stats.tokens.total_tokens),
+        memory: "-".to_owned(),
+        turn: stats.turn_count.to_string(),
+    }
+}
+
+fn session_columns(available_width: usize) -> Vec<SessionColumn> {
     let mut columns = vec![
-        column("pid", "Pid", "-", Color::DarkGray, 5, 7),
-        column("project", "Project", project, Color::White, 10, 16),
-        column("session", "Session", session, Color::Yellow, 9, 10),
-        column("summary", "Summary", "-", Color::DarkGray, 8, 12),
-        column("status", "Status", status, Color::Yellow, 8, 10),
-        column("model", "Model", model, Color::White, 10, 16),
-        column("context", "Context", context, Color::LightBlue, 8, 8),
-        column("tokens", "Tokens", tokens, Color::Magenta, 10, 13),
-        column("memory", "Memory", "-", Color::DarkGray, 7, 9),
-        column("turn", "Turn", turn, Color::Cyan, 5, 5),
+        column("pid", "Pid", 5, 7),
+        column("project", "Project", 10, 16),
+        column("session", "Session", 9, 10),
+        column("summary", "Summary", 8, 12),
+        column("status", "Status", 8, 10),
+        column("model", "Model", 10, 16),
+        column("context", "Context", 8, 8),
+        column("tokens", "Tokens", 10, 13),
+        column("memory", "Memory", 7, 9),
+        column("turn", "Turn", 5, 5),
     ];
 
     fit_columns(&mut columns, available_width);
@@ -79,16 +175,12 @@ fn session_columns(app: &AppState, available_width: usize) -> Vec<SessionColumn>
 fn column(
     key: &'static str,
     header: &'static str,
-    value: impl Into<String>,
-    color: Color,
     min_width: usize,
     width: usize,
 ) -> SessionColumn {
     SessionColumn {
         key,
         header,
-        value: value.into(),
-        color,
         min_width,
         width,
     }
@@ -172,20 +264,49 @@ fn header_line(columns: &[SessionColumn]) -> Line<'static> {
     )
 }
 
-fn value_line(columns: &[SessionColumn]) -> Line<'static> {
+fn value_line(columns: &[SessionColumn], row: &SessionRow) -> Line<'static> {
     Line::from(
         columns
             .iter()
             .map(|column| {
                 Span::styled(
-                    pad_or_truncate(&column.value, column.width),
+                    pad_or_truncate(row.value(column.key), column.width),
                     Style::default()
-                        .fg(column.color)
+                        .fg(cell_color(column.key))
                         .add_modifier(Modifier::BOLD),
                 )
             })
             .collect::<Vec<_>>(),
     )
+}
+
+impl SessionRow {
+    fn value(&self, key: &str) -> &str {
+        match key {
+            "pid" => &self.pid,
+            "project" => &self.project,
+            "session" => &self.session,
+            "summary" => &self.summary,
+            "status" => &self.status,
+            "model" => &self.model,
+            "context" => &self.context,
+            "tokens" => &self.tokens,
+            "memory" => &self.memory,
+            "turn" => &self.turn,
+            _ => "-",
+        }
+    }
+}
+
+fn cell_color(key: &str) -> Color {
+    match key {
+        "pid" | "summary" | "memory" => Color::DarkGray,
+        "session" | "status" => Color::Yellow,
+        "context" => Color::LightBlue,
+        "tokens" => Color::Magenta,
+        "turn" => Color::Cyan,
+        _ => Color::White,
+    }
 }
 
 fn context_percent_label(context_tokens: Option<u64>, model: Option<&str>) -> String {
@@ -228,6 +349,16 @@ fn project_name(cwd: &str) -> Option<&str> {
     Path::new(cwd).file_name()?.to_str()
 }
 
+fn project_name_from_session_path(path: Option<&Path>) -> Option<&str> {
+    path?
+        .parent()?
+        .file_name()?
+        .to_str()?
+        .trim_matches('-')
+        .rsplit('-')
+        .next()
+}
+
 fn short_session_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
@@ -253,6 +384,19 @@ fn format_count(value: u64) -> String {
     }
 
     out.chars().rev().collect()
+}
+
+fn format_memory(bytes: u64) -> String {
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * MB;
+
+    if bytes >= GB {
+        format!("{:.1}G", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{}M", bytes / MB)
+    } else {
+        format!("{}K", bytes / 1024)
+    }
 }
 
 #[cfg(test)]
@@ -290,23 +434,27 @@ mod tests {
     }
 
     #[test]
+    fn formats_memory_compactly() {
+        assert_eq!(format_memory(512 * 1024), "512K");
+        assert_eq!(format_memory(335 * 1024 * 1024), "335M");
+        assert_eq!(format_memory(1536 * 1024 * 1024), "1.5G");
+    }
+
+    #[test]
     fn session_columns_fit_available_width() {
-        let app = AppState::new();
-        let columns = session_columns(&app, 72);
+        let columns = session_columns(72);
         assert!(total_width(&columns) <= 72);
     }
 
     #[test]
     fn session_columns_expand_to_available_width() {
-        let app = AppState::new();
-        let columns = session_columns(&app, 160);
+        let columns = session_columns(160);
         assert_eq!(total_width(&columns), 160);
     }
 
     #[test]
     fn narrow_session_columns_keep_core_fields() {
-        let app = AppState::new();
-        let columns = session_columns(&app, 48);
+        let columns = session_columns(48);
         let keys: Vec<&str> = columns.iter().map(|column| column.key).collect();
 
         assert!(keys.contains(&"project"));
@@ -314,5 +462,44 @@ mod tests {
         assert!(keys.contains(&"status"));
         assert!(keys.contains(&"tokens"));
         assert!(total_width(&columns) <= 48);
+    }
+
+    #[test]
+    fn ignores_unassociated_process_candidates() {
+        let mut app = AppState::new();
+        app.pi_instances.push(PiInstance {
+            pid: 42,
+            ppid: 1,
+            memory_bytes: 335 * 1024 * 1024,
+            cpu_percent: 0.0,
+            command: "pi-coding-agent".to_owned(),
+            session_path: None,
+            stats: None,
+        });
+
+        let rows = session_rows(&app, 8);
+
+        assert!(rows.is_empty());
+        assert_eq!(row_count(&app), 1);
+    }
+
+    #[test]
+    fn uses_associated_instances_before_fallback_stats() {
+        let mut app = AppState::new();
+        app.pi_instances.push(PiInstance {
+            pid: 42,
+            ppid: 1,
+            memory_bytes: 335 * 1024 * 1024,
+            cpu_percent: 0.0,
+            command: "pi-coding-agent".to_owned(),
+            session_path: Some("session.jsonl".into()),
+            stats: None,
+        });
+
+        let rows = session_rows(&app, 8);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pid, "42");
+        assert_eq!(rows[0].memory, "335M");
     }
 }
