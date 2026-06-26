@@ -19,6 +19,7 @@ pub struct AppState {
     pub system_stats: SystemStats,
     pub current_session_path: Option<PathBuf>,
     pub pi_instances: Vec<PiInstance>,
+    pub selected_instance_index: usize,
     pub logs: VecDeque<AppLogEntry>,
     pub max_logs: usize,
 }
@@ -30,6 +31,7 @@ impl Default for AppState {
             system_stats: SystemStats::default(),
             current_session_path: None,
             pi_instances: Vec::new(),
+            selected_instance_index: 0,
             logs: VecDeque::new(),
             max_logs: 500,
         }
@@ -82,6 +84,53 @@ impl AppState {
 
     pub fn apply_pi_instances(&mut self, instances: Vec<PiInstance>) {
         self.pi_instances = instances;
+        self.clamp_selected_instance();
+    }
+
+    pub fn select_next_instance(&mut self) {
+        let count = self.associated_instance_count();
+        if count == 0 {
+            self.selected_instance_index = 0;
+            return;
+        }
+        self.selected_instance_index = (self.selected_instance_index + 1) % count;
+    }
+
+    pub fn select_previous_instance(&mut self) {
+        let count = self.associated_instance_count();
+        if count == 0 {
+            self.selected_instance_index = 0;
+            return;
+        }
+        self.selected_instance_index = if self.selected_instance_index == 0 {
+            count - 1
+        } else {
+            self.selected_instance_index - 1
+        };
+    }
+
+    pub fn selected_instance_session_path(&self) -> Option<PathBuf> {
+        self.pi_instances
+            .iter()
+            .filter(|instance| instance.session_path.is_some() || instance.stats.is_some())
+            .nth(self.selected_instance_index)
+            .and_then(|instance| instance.session_path.clone())
+    }
+
+    pub fn associated_instance_count(&self) -> usize {
+        self.pi_instances
+            .iter()
+            .filter(|instance| instance.session_path.is_some() || instance.stats.is_some())
+            .count()
+    }
+
+    fn clamp_selected_instance(&mut self) {
+        let count = self.associated_instance_count();
+        if count == 0 {
+            self.selected_instance_index = 0;
+        } else {
+            self.selected_instance_index = self.selected_instance_index.min(count - 1);
+        }
     }
 
     fn push_log(&mut self, log: AppLogEntry) {
@@ -138,7 +187,7 @@ impl AppLogEntry {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::data::session::parse_entries;
+    use crate::data::{process::PiInstance, session::parse_entries};
 
     use super::*;
 
@@ -218,6 +267,47 @@ mod tests {
         assert_eq!(app.current_session_path, Some(PathBuf::from("new.jsonl")));
         assert_eq!(app.session_stats.session_id.as_deref(), Some("new"));
         assert_eq!(app.logs.len(), 1);
+    }
+
+    #[test]
+    fn instance_selection_wraps_and_defaults_to_first() {
+        let mut app = AppState::new();
+        app.apply_pi_instances(vec![
+            PiInstance {
+                pid: 1,
+                ppid: 0,
+                memory_bytes: 0,
+                cpu_percent: 0.0,
+                command: "pi".to_owned(),
+                session_path: Some(PathBuf::from("one.jsonl")),
+                stats: None,
+            },
+            PiInstance {
+                pid: 2,
+                ppid: 0,
+                memory_bytes: 0,
+                cpu_percent: 0.0,
+                command: "pi".to_owned(),
+                session_path: Some(PathBuf::from("two.jsonl")),
+                stats: None,
+            },
+        ]);
+
+        assert_eq!(app.selected_instance_index, 0);
+        assert_eq!(
+            app.selected_instance_session_path(),
+            Some(PathBuf::from("one.jsonl"))
+        );
+
+        app.select_next_instance();
+        assert_eq!(app.selected_instance_index, 1);
+        assert_eq!(
+            app.selected_instance_session_path(),
+            Some(PathBuf::from("two.jsonl"))
+        );
+
+        app.select_next_instance();
+        assert_eq!(app.selected_instance_index, 0);
     }
 
     #[test]

@@ -82,13 +82,23 @@ fn attach_recent_sessions_to_unmatched_instances(
     instances: &mut [PiInstance],
     sessions_dir: &Path,
 ) -> Result<()> {
+    instances.sort_by(|left, right| left.pid.cmp(&right.pid));
+
     let used: HashSet<PathBuf> = instances
         .iter()
         .filter_map(|instance| instance.session_path.clone())
         .collect();
-    let mut recent_sessions = recent_session_files(sessions_dir)?
+    let unmatched_count = instances
+        .iter()
+        .filter(|instance| instance.session_path.is_none() && is_pi_process(&instance.command))
+        .count();
+    let mut recent_sessions: Vec<PathBuf> = recent_session_files(sessions_dir)?
         .into_iter()
-        .filter(|path| !used.contains(path));
+        .filter(|path| !used.contains(path))
+        .take(unmatched_count)
+        .collect();
+    recent_sessions.reverse();
+    let mut recent_sessions = recent_sessions.into_iter();
 
     for instance in instances
         .iter_mut()

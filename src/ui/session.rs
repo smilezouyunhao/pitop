@@ -23,6 +23,7 @@ struct SessionColumn {
 
 #[derive(Debug, Clone)]
 struct SessionRow {
+    selected: bool,
     pid: String,
     project: String,
     session: String,
@@ -74,11 +75,17 @@ fn session_rows(app: &AppState, limit: usize) -> Vec<SessionRow> {
 
     let associated: Vec<_> = associated_instances(app).take(limit).collect();
     if !associated.is_empty() {
-        return associated.into_iter().map(row_from_instance).collect();
+        return associated
+            .into_iter()
+            .enumerate()
+            .map(|(index, instance)| {
+                row_from_instance(instance, index == app.selected_instance_index)
+            })
+            .collect();
     }
 
     if app.session_stats.session_id.is_some() {
-        return vec![row_from_stats(&app.session_stats)];
+        return vec![row_from_stats(&app.session_stats, true)];
     }
 
     Vec::new()
@@ -90,7 +97,7 @@ fn associated_instances(app: &AppState) -> impl Iterator<Item = &PiInstance> {
         .filter(|instance| instance.session_path.is_some() || instance.stats.is_some())
 }
 
-fn row_from_instance(instance: &PiInstance) -> SessionRow {
+fn row_from_instance(instance: &PiInstance, selected: bool) -> SessionRow {
     let stats = instance.stats.as_ref();
     let project = stats
         .and_then(|stats| stats.cwd.as_deref())
@@ -102,6 +109,7 @@ fn row_from_instance(instance: &PiInstance) -> SessionRow {
         .unwrap_or_else(|| "-".to_owned());
 
     SessionRow {
+        selected,
         pid: instance.pid.to_string(),
         project,
         session: stats
@@ -129,8 +137,9 @@ fn row_from_instance(instance: &PiInstance) -> SessionRow {
     }
 }
 
-fn row_from_stats(stats: &SessionStats) -> SessionRow {
+fn row_from_stats(stats: &SessionStats, selected: bool) -> SessionRow {
     SessionRow {
+        selected,
         pid: "-".to_owned(),
         project: stats
             .cwd
@@ -155,6 +164,7 @@ fn row_from_stats(stats: &SessionStats) -> SessionRow {
 
 fn session_columns(available_width: usize) -> Vec<SessionColumn> {
     let mut columns = vec![
+        column("selected", "", 2, 2),
         column("pid", "Pid", 5, 7),
         column("project", "Project", 10, 16),
         column("session", "Session", 9, 10),
@@ -189,7 +199,7 @@ fn column(
 fn fit_columns(columns: &mut Vec<SessionColumn>, available_width: usize) {
     shrink_columns(columns, available_width);
 
-    for key in ["pid", "memory", "context", "summary", "turn", "model"] {
+    for key in ["memory", "context", "summary", "turn", "model", "pid"] {
         if total_width(columns) <= available_width {
             break;
         }
@@ -265,24 +275,32 @@ fn header_line(columns: &[SessionColumn]) -> Line<'static> {
 }
 
 fn value_line(columns: &[SessionColumn], row: &SessionRow) -> Line<'static> {
-    Line::from(
-        columns
-            .iter()
-            .map(|column| {
-                Span::styled(
-                    pad_or_truncate(row.value(column.key), column.width),
-                    Style::default()
-                        .fg(cell_color(column.key))
-                        .add_modifier(Modifier::BOLD),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )
+    let spans = columns
+        .iter()
+        .map(|column| {
+            let mut style = Style::default()
+                .fg(cell_color(column.key))
+                .add_modifier(Modifier::BOLD);
+            if row.selected {
+                style = style.bg(Color::Rgb(24, 24, 42));
+            }
+            Span::styled(pad_or_truncate(row.value(column.key), column.width), style)
+        })
+        .collect::<Vec<_>>();
+
+    Line::from(spans)
 }
 
 impl SessionRow {
     fn value(&self, key: &str) -> &str {
         match key {
+            "selected" => {
+                if self.selected {
+                    "›"
+                } else {
+                    ""
+                }
+            }
             "pid" => &self.pid,
             "project" => &self.project,
             "session" => &self.session,
@@ -300,6 +318,7 @@ impl SessionRow {
 
 fn cell_color(key: &str) -> Color {
     match key {
+        "selected" => Color::Cyan,
         "pid" | "summary" | "memory" => Color::DarkGray,
         "session" | "status" => Color::Yellow,
         "context" => Color::LightBlue,

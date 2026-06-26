@@ -100,7 +100,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if handle_key_event(key) {
+                if handle_key_event(&mut app, key)? {
                     break;
                 }
             }
@@ -113,24 +113,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
 
 fn refresh_pi_instances(app: &mut AppState, sessions_dir: &Path) -> Result<()> {
     let instances = discover_pi_instances(sessions_dir)?;
-    let active_session = instances
-        .iter()
-        .filter_map(|instance| instance.session_path.as_deref())
-        .next()
-        .map(Path::to_path_buf);
-
     app.apply_pi_instances(instances);
-
-    let should_load_active = app.current_session_path.is_none()
-        || active_session
-            .as_ref()
-            .is_some_and(|path| app.current_session_path.as_ref() != Some(path));
-
-    if should_load_active {
-        if let Some(path) = active_session {
-            load_session_file(app, &path)?;
-        }
-    }
+    load_selected_instance_session(app)?;
 
     Ok(())
 }
@@ -138,24 +122,12 @@ fn refresh_pi_instances(app: &mut AppState, sessions_dir: &Path) -> Result<()> {
 fn drain_watch_events(
     app: &mut AppState,
     receiver: &mut mpsc::UnboundedReceiver<WatchEvent>,
-    cwd: &Path,
+    _cwd: &Path,
 ) {
     while let Ok(event) = receiver.try_recv() {
         match event {
             WatchEvent::Entry { path, entry } => {
-                let should_load_file = app.current_session_path.as_ref() != Some(&path)
-                    || app.session_stats.session_id.is_none();
-
-                if should_load_file {
-                    match load_session_file_if_matches_cwd(app, &path, cwd) {
-                        Ok(true) => {}
-                        Ok(false) => {}
-                        Err(error) => app.apply_watch_event(WatchEvent::Error {
-                            path: Some(path),
-                            message: error.to_string(),
-                        }),
-                    }
-                } else {
+                if app.current_session_path.as_ref() == Some(&path) {
                     app.apply_entry(&entry);
                 }
             }
@@ -166,8 +138,42 @@ fn drain_watch_events(
     }
 }
 
-fn handle_key_event(key: KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+fn handle_key_event(app: &mut AppState, key: KeyEvent) -> Result<bool> {
+    if key.kind != KeyEventKind::Press {
+        return Ok(false);
+    }
+
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => Ok(true),
+        KeyCode::Down => {
+            app.select_next_instance();
+            load_selected_instance_session(app)?;
+            Ok(false)
+        }
+        KeyCode::Up => {
+            app.select_previous_instance();
+            load_selected_instance_session(app)?;
+            Ok(false)
+        }
+        KeyCode::Home => {
+            app.selected_instance_index = 0;
+            load_selected_instance_session(app)?;
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn load_selected_instance_session(app: &mut AppState) -> Result<()> {
+    let Some(path) = app.selected_instance_session_path() else {
+        return Ok(());
+    };
+
+    if app.current_session_path.as_ref() != Some(&path) || app.session_stats.session_id.is_none() {
+        load_session_file(app, &path)?;
+    }
+
+    Ok(())
 }
 
 fn default_sessions_dir() -> PathBuf {
@@ -190,16 +196,6 @@ fn load_latest_session_for_cwd(app: &mut AppState, sessions_dir: &Path, cwd: &Pa
     };
 
     load_session_file(app, &session_file)
-}
-
-fn load_session_file_if_matches_cwd(app: &mut AppState, path: &Path, cwd: &Path) -> Result<bool> {
-    let cwd = cwd.to_string_lossy();
-    if !session_file_matches_cwd(path, &cwd)? {
-        return Ok(false);
-    }
-
-    load_session_file(app, path)?;
-    Ok(true)
 }
 
 fn load_session_file(app: &mut AppState, path: &Path) -> Result<()> {
